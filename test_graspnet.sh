@@ -5,9 +5,9 @@ CUDA_VISIBLE_DEVICES=0 python test_graspnet.py \
 --anchor-w 50 \
 --anchor-z 20 \
 --grid-size 8 \
---scene-l 100 \
---scene-r 130 \
---all-points-num 25600 \
+--scene-l 180 \
+--scene-r 190 \
+--all-points-num 51200 \
 --group-num 512 \
 --local-k 10 \
 --ratio 8 \
@@ -16,8 +16,8 @@ CUDA_VISIBLE_DEVICES=0 python test_graspnet.py \
 --local-thres 0.01 \
 --heatmap-thres 0.01 \
 --num-workers 4 \
---dataset-path '/data/6dto2drefine_realsense' \
---checkpoint './realsense_checkpoint' \
---scene-path '/ssd/graspnet' \
+--dataset-path './6dto2drefine_realsense' \
+--checkpoint '/home/johnny/goal_grasp_projects/mine_HGGD_ws/src/HGGD/logs/full/250321_145147_realsense/epoch_9_iou_0.973_cover_0.663' \
+--scene-path '/media/johnny/Johnny/graspnet' \
 --dump-dir 'pred_grasps' \
---description 'realsense_seen'
+--description 'CBMA_novel_180-190_dense'

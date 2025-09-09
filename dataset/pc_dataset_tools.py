@@ -55,11 +55,16 @@ def get_group_pc(pc: torch.Tensor,
                  group_num,
                  grasp_widths,
                  min_points=32,
-                 is_training=True):
+                 is_training=True,
+                 is_wide=False):
     batch_size, feature_len = pc.shape[0], pc.shape[2]
     pc_group = torch.zeros((0, group_num, feature_len),
                            dtype=torch.float32,
                            device='cuda')
+    wide_group_num = group_num * 2
+    wide_pc_group = torch.zeros((0, wide_group_num, feature_len),
+                           dtype=torch.float32,
+                           device='cuda') if is_wide else None
     valid_local_centers = []
     valid_center_masks = []
     # get the points around one scored center
@@ -82,6 +87,8 @@ def get_group_pc(pc: torch.Tensor,
             # 0.8 ~ 1.2
             width_scale = 0.8 + 0.4 * torch.rand(
                 (len(grasp_widths_tensor), 1), device='cuda')
+            # width_scale = 1.1 * torch.rand(
+            #     (len(grasp_widths_tensor), 1), device='cuda')
         masks = (dis < grasp_widths_tensor * width_scale)
         # select valid center from all center
         center_cnt = len(local_centers[i])
@@ -91,6 +98,17 @@ def get_group_pc(pc: torch.Tensor,
         partial_pcs = torch.zeros((center_cnt, max_pc_cnt, feature_len),
                                   device='cuda')
         lengths = torch.zeros((center_cnt, ), device='cuda')
+
+        # 为wide采样的准备
+        if is_wide:
+            wide_scale = 2
+            wide_masks = (dis < grasp_widths_tensor * width_scale * wide_scale) #在2倍抓取宽度的范围内进行点采样
+            wide_min_points = min_points * 3
+            wide_max_pc_cnt = max(wide_group_num, wide_masks.sum(1).max())
+            wide_partial_pcs = torch.zeros((center_cnt, wide_max_pc_cnt, feature_len),
+                                    device='cuda')
+            wide_lengths = torch.zeros((center_cnt, ), device='cuda')
+        
         for j in range(center_cnt):
             # seg points
             partial_points = pc[i, masks[j]]
@@ -108,6 +126,25 @@ def get_group_pc(pc: torch.Tensor,
                     continue
             partial_pcs[j, :point_cnt] = partial_points
             lengths[j] = point_cnt
+            
+        if is_wide:
+            for j in range(center_cnt):
+                # wide部分
+                wide_partial_points = pc[i, wide_masks[j]]
+                wide_point_cnt = wide_partial_points.shape[0]
+                if wide_point_cnt < wide_group_num:
+                    if wide_point_cnt > wide_min_points:
+                        idxs = torch.randint(wide_point_cnt, (wide_group_num, ),
+                                            device='cuda')
+                        wide_partial_points = wide_partial_points[idxs]
+                        wide_point_cnt = wide_group_num
+                    else:
+                        valid_mask[j] = False
+                        wide_lengths[j] = wide_group_num
+                        continue
+                wide_partial_pcs[j, :wide_point_cnt] = wide_partial_points
+                wide_lengths[j] = wide_point_cnt
+
         # add a little noise to avoid repeated points
         partial_pcs[..., :3] += torch.randn(partial_pcs.shape[:-1] + (3, ),
                                             device='cuda') * 5e-4
@@ -123,10 +160,35 @@ def get_group_pc(pc: torch.Tensor,
         cur_pc[..., :3] = cur_pc[..., :3] - local_centers[i][valid_mask][:,
                                                                          None]
         pc_group = torch.concat([pc_group, cur_pc], 0)
+
+        # wide同样加噪声，最远点采样和平移
+        if is_wide:
+            # print("wide: ", wide_lengths.shape)
+            # print("origin: ", lengths.shape)
+            # wide也加噪声
+            wide_partial_pcs[..., :3] += torch.randn(wide_partial_pcs.shape[:-1] + (3, ),
+                                                device='cuda') * 5e-4
+            # doing fps
+            _, idxs = sample_farthest_points(wide_partial_pcs[..., :3],
+                                            lengths=wide_lengths,
+                                            K=wide_group_num,
+                                            random_start_point=True)
+            # mv center of pc to (0, 0, 0), stack to pc_group
+            temp_idxs = idxs[..., None].repeat(1, 1, feature_len)
+            cur_pc = torch.gather(wide_partial_pcs, 1, temp_idxs)
+            cur_pc = cur_pc[valid_mask]
+            cur_pc[..., :3] = cur_pc[..., :3] - local_centers[i][valid_mask][:,
+                                                                            None]
+            wide_pc_group = torch.concat([wide_pc_group, cur_pc], 0)
+
         # stack pc and get valid center list
         valid_local_centers.append(local_centers[i][valid_mask])
         valid_center_masks.append(valid_mask)
-    return pc_group, valid_local_centers, valid_center_masks
+
+    if is_wide:
+        return pc_group, wide_pc_group, valid_local_centers, valid_center_masks
+    else:
+        return pc_group, valid_local_centers, valid_center_masks
 
 
 def center2dtopc(rect_ggs: List,
@@ -137,6 +199,7 @@ def center2dtopc(rect_ggs: List,
                  is_training=True):
     # add extra axis when valid, avoid dim errors
     batch_size = depths.shape[0]
+    # print(depths.shape)
     center_batch_pc = []
 
     scale_x, scale_y = 1280 / output_size[0], 720 / output_size[1]
@@ -292,7 +355,48 @@ def select_area(loc_map, top, bottom, left, right, grid_size, overlap):
     return local_areas
 
 
-def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
+def farthest_grid_sampling(points, num_samples):
+    """
+    对通过网格采样得到的像素点进行最远点采样
+    
+    参数:
+        points: 通过网格采样得到的像素点数组，形状为 (N, 2)
+        num_samples: 最终要选取的像素点数量
+        
+    返回:
+        最远点采样后的像素点数组，形状为 (num_samples, 2)
+    """
+    n = points.shape[0]
+    if n <= num_samples:
+        return points
+    
+    # 1. 初始化
+    selected_points = np.zeros((num_samples, 2), dtype=points.dtype)
+    min_distances = np.full(n, np.inf)  # 存储每个点到已选点集的最小距离
+    
+    # 2. 选择起始点 (随机选择或根据热力图值)
+    start_idx = np.random.randint(n)
+    selected_points[0] = points[start_idx]
+    
+    # 3. 计算所有点到第一个点的距离
+    dist_to_start = np.linalg.norm(points - points[start_idx], axis=1)
+    min_distances = np.minimum(min_distances, dist_to_start)
+    
+    # 4. 迭代选择剩余点
+    for i in range(1, num_samples):
+        # 找到距离当前已选点集最远的点
+        farthest_idx = np.argmax(min_distances)
+        selected_points[i] = points[farthest_idx]
+        
+        # 计算所有点到新选点的距离
+        dist_to_new = np.linalg.norm(points - points[farthest_idx], axis=1)
+        
+        # 更新最小距离
+        min_distances = np.minimum(min_distances, dist_to_new)
+    
+    return selected_points
+
+def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8, farthest=False) -> List:
     # deal with validation stage
     if isinstance(loc_maps, np.ndarray):
         loc_maps = loc_maps.copy()
@@ -303,6 +407,7 @@ def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
     # using torch to downsample
     if isinstance(loc_maps, np.ndarray):
         loc_maps = torch.from_numpy(loc_maps).cuda()
+    print(loc_maps.shape)
     batch_size = loc_maps.shape[0]
     center_2ds = []
     # using downsampled grid to avoid center too near
@@ -316,14 +421,26 @@ def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
     heat_grids = heat_grids.view((batch_size, -1))
     # get topk grid point
     for i in range(batch_size):
-        local_idx = torch.topk(heat_grids[i],
-                               k=min(heat_grids.shape[1], center_num),
-                               dim=0)[1]
-        local_max = np.zeros((len(local_idx), 2), dtype=np.int64)
-        local_max[:, 0] = torch.div(local_idx,
-                                    new_size[1],
-                                    rounding_mode='floor').cpu().numpy()
-        local_max[:, 1] = (local_idx % new_size[1]).cpu().numpy()
+        if not farthest:
+            local_idx = torch.topk(heat_grids[i],
+                                k=min(heat_grids.shape[1], center_num),
+                                dim=0)[1]
+            local_max = np.zeros((len(local_idx), 2), dtype=np.int64)
+            local_max[:, 0] = torch.div(local_idx,
+                                        new_size[1],
+                                        rounding_mode='floor').cpu().numpy()
+            local_max[:, 1] = (local_idx % new_size[1]).cpu().numpy()
+        if farthest:
+            local_idx = torch.topk(heat_grids[i],
+                                k=min(heat_grids.shape[1], int(center_num * 1.5)),
+                                dim=0)[1]
+            # print("值：",heat_grids[i][local_idx])
+            local_max = np.zeros((len(local_idx), 2), dtype=np.int64)
+            local_max[:, 0] = torch.div(local_idx,
+                                        new_size[1],
+                                        rounding_mode='floor').cpu().numpy()
+            local_max[:, 1] = (local_idx % new_size[1]).cpu().numpy()
+            local_max = farthest_grid_sampling(local_max, center_num)
         # get local max in this grid point
         overlap = 1
         top, bottom = local_max[:, 0] * grid_size - overlap, (
@@ -346,6 +463,129 @@ def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
     return center_2ds
 
 
+def bayes_gain(heat_grids, obj_grids, exclude=False):
+    """
+    Args:
+        heat_grids: torch.Tensor, shape (1, W, H), 先验概率
+        obj_grids:  torch.Tensor, shape (1, W, H), 似然概率
+        exclude:  为True则将蒙板外其他位置设为零; False则只进行蒙板内的增益。
+    Returns:
+        heat_gained_grids: torch.Tensor, shape (1, W, H), 后验概率
+    """
+    heat_grids = heat_grids.double()
+    obj_grids = obj_grids.double()
+
+    # 基础概率（可以修改）
+    base_rate = 0.25  
+
+    prior = heat_grids
+    likelihood = obj_grids
+
+    # 计算边际概率
+    marginal = base_rate * (1 - prior) + likelihood * prior
+
+    # 避免除零
+    eps = 1e-8
+    marginal = marginal + eps
+
+    posterior = likelihood * prior / marginal
+
+    if exclude:
+        # where选择: 如果likelihood=0，则取0，否则取posterior，即蒙板外其他位置均设为0
+        heat_gained_grids = torch.where(likelihood > 0, posterior, 0.)
+    else:
+        # where选择: 如果likelihood=0，则取prior，否则取posterior
+        heat_gained_grids = torch.where(likelihood > 0, posterior, prior)
+
+    return heat_gained_grids
+
+
+def select_2d_center_yolo(loc_maps, center_num, obj_mask, reduce='max', grid_size=8, farthest=True, goal_only=False) -> List:
+    # arg:  obj_mask (W, H) is conf_mask tensor
+    #       loc_maps (1, W, H)
+    # deal with validation stage
+    if isinstance(loc_maps, np.ndarray):
+        loc_maps = loc_maps.copy()
+    else:
+        loc_maps = loc_maps.clone()
+    if len(loc_maps.shape) == 2:
+        loc_maps = loc_maps[None]
+    # using torch to downsample
+    if isinstance(loc_maps, np.ndarray):
+        loc_maps = torch.from_numpy(loc_maps).cuda()
+    batch_size = loc_maps.shape[0]
+    center_2ds = []
+    # using downsampled grid to avoid center too near
+    new_size = (loc_maps.shape[1] // grid_size, loc_maps.shape[2] // grid_size)
+    if reduce == 'avg':
+        heat_grids = nnf.avg_pool2d(loc_maps[None], grid_size).squeeze()
+    elif reduce == 'max':
+        heat_grids = nnf.max_pool2d(loc_maps[None], grid_size).squeeze()
+    else:
+        raise RuntimeError(f'Unrecognized reduce: {reduce}')
+    # 处理obj_mask
+    obj_mask = obj_mask.cuda()
+    if len(obj_mask.shape) == 2:
+        obj_grids = nnf.max_pool2d(obj_mask[None, None], grid_size).squeeze()
+    else:
+        raise RuntimeError(f'need obj_mask dim 2, but got {len(obj_mask.shape)}')
+    # print("loc",loc_maps.shape," mask",obj_mask.shape)
+    # print("heat",heat_grids.shape," obj",obj_grids.shape)
+    # 置信度增益，arg：exclude为True则不在蒙板外采样；为false则依然全局采样，依据goal_only选择是否在蒙板内过滤
+    # 问题：当采用exclude时，可能该物体蒙板内置信度过低，使得采样虽然只在蒙板内进行，但最后回归得到靠近蒙板的其他物体的抓取。
+    heat_grids = bayes_gain(heat_grids, obj_grids, exclude=False)
+
+    heat_grids = heat_grids.view((batch_size, -1))
+    # get topk grid point
+    for i in range(batch_size):
+        if not farthest:
+            local_idx = torch.topk(heat_grids[i],
+                                k=min(heat_grids.shape[1], center_num),
+                                dim=0)[1]
+            local_max = np.zeros((len(local_idx), 2), dtype=np.int64)
+            local_max[:, 0] = torch.div(local_idx,
+                                        new_size[1],
+                                        rounding_mode='floor').cpu().numpy()
+            local_max[:, 1] = (local_idx % new_size[1]).cpu().numpy()
+        if farthest:
+            local_idx = torch.topk(heat_grids[i],
+                                k=min(heat_grids.shape[1], int(center_num * 1.5)),
+                                dim=0)[1]
+            # print("值：",heat_grids[i][local_idx])
+            local_max = np.zeros((len(local_idx), 2), dtype=np.int64)
+            local_max[:, 0] = torch.div(local_idx,
+                                        new_size[1],
+                                        rounding_mode='floor').cpu().numpy()
+            local_max[:, 1] = (local_idx % new_size[1]).cpu().numpy()
+            local_max = farthest_grid_sampling(local_max, center_num)
+        # === goal_only过滤逻辑 ===
+        if goal_only:
+            obj_grid_np = obj_grids.squeeze(0).cpu().numpy()  # (W, H)
+            keep_mask = obj_grid_np[local_max[:, 0], local_max[:, 1]] > 0
+            local_max = local_max[keep_mask]
+        # =======================
+        # get local max in this grid point
+        overlap = 1
+        top, bottom = local_max[:, 0] * grid_size - overlap, (
+            local_max[:, 0] + 1) * grid_size + overlap
+        top, bottom = np.maximum(0, top), np.minimum(bottom,
+                                                     loc_maps.shape[1] - 1)
+        left, right = local_max[:, 1] * grid_size - overlap, (
+            local_max[:, 1] + 1) * grid_size + overlap
+        left, right = np.maximum(0, left), np.minimum(right,
+                                                      loc_maps.shape[2] - 1)
+        # using jit to faster get local areas
+        local_areas = select_area(loc_maps[i].cpu().numpy(), top, bottom, left,
+                                  right, grid_size, overlap)
+        local_areas = torch.from_numpy(local_areas).float().cuda()
+        # batch calculate
+        grid_idxs = torch.argmax(local_areas, dim=1).cpu().numpy()
+        local_max[:, 0] = top + grid_idxs // (right - left)
+        local_max[:, 1] = left + grid_idxs % (right - left)
+
+        center_2ds.append(local_max)
+    return center_2ds
+
 def data_process(points: torch.Tensor,
                  depths: torch.Tensor,
                  rect_ggs: List,
@@ -353,7 +593,8 @@ def data_process(points: torch.Tensor,
                  group_num,
                  output_size,
                  min_points=32,
-                 is_training=True):
+                 is_training=True,
+                 is_wide=False):
     # select partial pc centers
     local_center = center2dtopc(rect_ggs,
                                 center_num,
@@ -363,17 +604,84 @@ def data_process(points: torch.Tensor,
                                 is_training=is_training)
     # get grasp width for pc segmentation
     grasp_widths = []
+    if is_wide:
+        grasp_wide_widths = []
+        for rect_gg in rect_ggs:
+            grasp_wide_widths.append(2 * rect_gg.get_6d_width())
+
     for rect_gg in rect_ggs:
         grasp_widths.append(rect_gg.get_6d_width())
+    # print(grasp_widths)
     # seg point cloud
-    pc_group, valid_local_centers, valid_center_masks = get_group_pc(
-        points,
-        local_center,
-        group_num,
-        grasp_widths,
-        min_points=min_points,
-        is_training=is_training)
+    if is_wide:
+        pc_group, wide_pc_group, valid_local_centers, valid_center_masks = get_group_pc(
+            points,
+            local_center,
+            group_num,
+            grasp_widths,
+            min_points=min_points,
+            is_training=is_training,
+            is_wide=is_wide)
+    else:
+        pc_group, valid_local_centers, valid_center_masks = get_group_pc(
+            points,
+            local_center,
+            group_num,
+            grasp_widths,
+            min_points=min_points,
+            is_training=is_training)        
     # modify rect_ggs
     for i, mask in enumerate(valid_center_masks):
         rect_ggs[i] = rect_ggs[i][mask.cpu().numpy()]
-    return pc_group, valid_local_centers
+
+    # visualize_grasp_and_pointcloud(rect_ggs, pc_group, wide_pc_group=wide_pc_group)
+    if is_wide:
+        return pc_group, wide_pc_group, valid_local_centers
+    else:
+        return pc_group, valid_local_centers
+
+import open3d as o3d
+
+def visualize_grasp_and_pointcloud(rect_ggs, pc_group, wide_pc_group=None):
+    rect_grasp = rect_ggs[0]  #取第一个batch
+    print("pc: ",pc_group.shape)
+    print("pc_wide: ",wide_pc_group.shape)
+    pointcloud_data = pc_group[0, :, :3]  # 取第一个点云并提取前三个维度 (x, y, z)
+    if isinstance(pointcloud_data, torch.Tensor):
+        pointcloud_data = pointcloud_data.cpu().numpy()  # 确保转换为 NumPy
+
+    # 确保是 float64 类型
+    pointcloud_data = pointcloud_data.astype(np.float64)
+
+    grasps = rect_grasp.to_6d_grasp_group()
+    # print(grasps.widths)
+
+    # 生成抓取框的 3D 形状
+    gripper_mesh = grasps.to_open3d_geometry_list()[0]
+
+    # 生成点云
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pointcloud_data)
+
+    if wide_pc_group is not None:
+        wide_pointcloud = wide_pc_group[0, :, :3]
+        wide_pointcloud = wide_pointcloud.cpu().numpy()
+        pcd_wide = o3d.geometry.PointCloud()
+        pcd_wide.points = o3d.utility.Vector3dVector(wide_pointcloud)
+
+        # 设置颜色：小范围红色，大范围红加绿，先画大范围，再小范围
+        color = np.array([[0.0, 0.0, 0.7]])
+        colors = np.tile(color, (wide_pointcloud.shape[0], 1))
+        pcd_wide.colors = o3d.utility.Vector3dVector(colors)
+
+        # 设置颜色：统一红色
+        color = np.array([[1.0, 0.0, 0.0]])
+        colors = np.tile(color, (pointcloud_data.shape[0], 1))
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        # 可视化
+        o3d.visualization.draw_geometries([pcd, pcd_wide])
+    
+    else:
+        # 可视化
+        o3d.visualization.draw_geometries([gripper_mesh, pcd])

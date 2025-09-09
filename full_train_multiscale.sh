@@ -1,0 +1,33 @@
+CUDA_VISIBLE_DEVICES=0 python full_train_multiscale.py \
+--batch-size 2 \
+--step-cnt 2 \
+--lr 2e-3 \
+--anchor-num 7 \
+--anchor-k 6 \
+--anchor-w 50 \
+--anchor-z 20 \
+--all-points-num 25600 \
+--group-num 512 \
+--center-num 128 \
+--scene-l 100 \
+--scene-r 101 \
+--noise 0 \
+--grid-size 8 \
+--input-w 640 \
+--input-h 360 \
+--loc-a 1 \
+--reg-b 5 \
+--cls-c 1 \
+--offset-d 1 \
+--epochs 10 \
+--ratio 8 \
+--num-workers 4 \
+--save-freq 1 \
+--optim 'adamw' \
+--momentum_m 0.9 \
+--momentum_v 0.999 \
+--dataset-path './6dto2drefine_realsense' \
+--scene-path '/home/johnny/datasets/graspnet_1Billion' \
+--checkpoint '/home/johnny/goal_grasp_projects/mine_HGGD_ws/src/HGGD/logs/full/250318_105144_realsense/epoch_2_iou_1.000_cover_0.659' \
+--description 'realsense' \
+--joint-trainning

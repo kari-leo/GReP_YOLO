@@ -143,7 +143,8 @@ class GraspNetEval(GraspNet):
 
         model_sampled_list = list()
         for model in model_list:
-            model_sampled = voxel_sample_points(model, 0.008)
+            # model_sampled = voxel_sample_points(model, 0.008)
+            model_sampled = voxel_sample_points(model, 0.01)
             model_sampled_list.append(model_sampled)
 
         scene_accuracy = []

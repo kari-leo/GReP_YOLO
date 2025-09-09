@@ -407,6 +407,8 @@ def eval_grasp(grasp_group,
         scene,
         outlier=0.05,
         return_dexgrasps=True)
+    
+    # print('collision mask list:', collision_mask_list)
 
     ## evaluate grasps
     # score configurations

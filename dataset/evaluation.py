@@ -6,11 +6,13 @@ import torch
 from numba import njit
 from torchvision.transforms.functional import gaussian_blur
 
+import matplotlib.pyplot as plt
+
 from dataset.collision_detector import ModelFreeCollisionDetector
 
 from .config import get_camera_intrinsic
 from .grasp import RectGrasp, RectGraspGroup
-from .pc_dataset_tools import select_2d_center
+from .pc_dataset_tools import select_2d_center,select_2d_center_yolo
 from .utils import angle_distance, euclid_distance, rotation_distance
 
 eps = 1e-6
@@ -84,6 +86,71 @@ def jit_detect_2d(loc_map, local_max, anchor_clss, grid_points, theta_offset,
     return centers, widths, depths, scores, thetas
 
 
+def plot_heatmap_with_points(loc_map, local_max):
+    """
+    绘制批次中第一个热图并标注局部最大值点
+    
+    参数:
+    loc_map (Tensor): 热图张量 [B, 1, H, W]
+    local_max (list): 局部最大值点列表 [B][K][2]
+    """
+    # 确保输入为PyTorch张量
+    if not isinstance(loc_map, torch.Tensor):
+        loc_map = torch.tensor(loc_map)
+
+    if len(loc_map.shape) == 2:
+        # 添加批次维和通道维：[H,W] → [1,H,W]
+        loc_map = loc_map[None] 
+    
+    # 获取第一个样本的热图数据
+    heatmap = loc_map[0].detach().cpu().numpy().T  # 移除通道维度 [H, W]
+    
+    # 获取第一个样本的局部最大值点
+    points = np.array(local_max[0])  # [K, 2]
+
+    # 创建图像和轴
+    plt.figure(figsize=(10, 8))
+    ax = plt.gca()
+    
+    # 绘制热图
+    im = ax.imshow(heatmap, cmap='magma', interpolation='gaussian')
+    
+    # 绘制局部最大值点（带发光效果）
+    ax.scatter(
+        points[:, 0], 
+        points[:, 1],
+        s=200,           # 点的大小
+        c='cyan',        # 点的颜色
+        edgecolors='white',  # 边缘色
+        linewidths=1.5,   # 边缘线宽
+        marker='*',       # 星形标记
+        alpha=0.9,        # 透明度
+        zorder=3         # 绘制在最上层
+    )
+    
+    # 添加发光效果
+    ax.scatter(
+        points[:, 0],
+        points[:, 1],
+        s=350,
+        c='cyan',
+        alpha=0.3,
+        zorder=2
+    )
+    
+    # 添加坐标轴和标题
+    plt.title('Heatmap with Local Maxima', fontsize=15, pad=20)
+    plt.xlabel('Width', fontsize=12)
+    plt.ylabel('Height', fontsize=12)
+    
+    # 添加专业配色条
+    cbar = plt.colorbar(im, pad=0.01)
+    cbar.set_label('Activation Intensity', rotation=270, labelpad=15, fontsize=12)
+    
+    # 优化布局
+    plt.tight_layout()
+    plt.show()
+
 def detect_2d_grasp(loc_map,
                     cls_mask,
                     theta_offset,
@@ -98,7 +165,8 @@ def detect_2d_grasp(loc_map,
                     rotation_num=1,
                     reduce='max',
                     grid_size=8,
-                    grasp_nms=8) -> RectGraspGroup:
+                    grasp_nms=8,
+                    farthest=False) -> RectGraspGroup:
     """detect 2d grasp from GHM heatmaps.
 
     Args:
@@ -124,7 +192,13 @@ def detect_2d_grasp(loc_map,
     local_max = select_2d_center(loc_map,
                                  center_num * 10,
                                  grid_size=grid_size,
-                                 reduce=reduce)
+                                 reduce=reduce,
+                                 farthest=farthest)
+    
+    # print("local_map shape:",loc_map.shape)
+    
+    # plot_heatmap_with_points(loc_map=loc_map,local_max=local_max)
+
     centers = []
     scores = []
     depths = []
@@ -153,6 +227,86 @@ def detect_2d_grasp(loc_map,
                             thetas=np.array(thetas))
     return grasps
 
+
+def detect_2d_grasp_yolo(loc_map,
+                        cls_mask,
+                        theta_offset,
+                        depth_offset,
+                        width_offset,
+                        ratio,
+                        obj_mask,
+                        anchor_k=6,
+                        anchor_w=50.0,
+                        anchor_z=20.0,
+                        mask_thre=0,
+                        center_num=1,
+                        rotation_num=1,
+                        reduce='max',
+                        grid_size=8,
+                        grasp_nms=8,
+                        farthest=True,
+                        goal_only=False) -> RectGraspGroup:
+    """detect 2d grasp from GHM heatmaps.
+
+    Args:
+        loc_map (Tensor): B x 1 x H x W
+        cls_mask (Tensor): B x anchor_k x H_r x W_r
+        theta_offset (Tensor): B x anchor_k x H_r x W_r
+        depth_offset (Tensor): B x 1 x H_r x W_r
+        width_offset (Tensor): B x 1 x H_r x W_r
+        ratio (int): image downsample ratio (local grid size)
+        anchor_k (int, optional): anchor num for theta angle. Defaults to 6.
+        anchor_w (float, optional): anchor for grasp width. Defaults to 50.0.
+        anchor_z (float, optional): anchor for grasp depth. Defaults to 20.0.
+        mask_thre (int, optional): mask applied on heat score. Defaults to 0.
+        center_num (int, optional): detect 2d center num. Defaults to 1.
+        rotation_num (int, optional): theta angle num in each 2d center. Defaults to 1.
+        reduce (str, optional): reduce type for grid-based sampling. Defaults to 'max'.
+        grid_size (int, optional): grid size for grid-based sampling. Defaults to 8.
+        grasp_nms (int, optional): min grasp dis for grid-based sampling. Defaults to 8.
+
+    Returns:
+        RectGraspGroup
+    """
+    local_max = select_2d_center_yolo(loc_map,
+                                 center_num * 10,
+                                 obj_mask,
+                                 grid_size=grid_size,
+                                 reduce=reduce,
+                                 farthest=farthest,
+                                 goal_only=goal_only)
+    
+    # print("local_map shape:",loc_map.shape)
+    
+    # plot_heatmap_with_points(loc_map=loc_map,local_max=local_max)
+
+    centers = []
+    scores = []
+    depths = []
+    thetas = []
+    widths = []
+    # batch reduction
+    loc_map = loc_map.squeeze()
+    local_max = local_max[0]
+    # filter by heatmap
+    qualitys = loc_map[local_max[:, 0], local_max[:, 1]]
+    quality_mask = (qualitys > mask_thre)
+    local_max = local_max[quality_mask]
+    grid_points = local_max // ratio
+    cls_qualitys = cls_mask[:, grid_points[:, 0], grid_points[:, 1]].T
+    # sort cls score
+    anchor_clss = np.argsort(cls_qualitys)
+    centers, widths, depths, scores, thetas = jit_detect_2d(
+        loc_map, local_max, anchor_clss, grid_points, theta_offset,
+        depth_offset, width_offset, rotation_num, anchor_k, anchor_w, anchor_z,
+        grasp_nms, center_num)
+    grasps = RectGraspGroup(centers=np.array(centers, dtype=np.int64),
+                            heights=np.full((len(centers), ), 25),
+                            widths=np.array(widths),
+                            depths=np.array(depths),
+                            scores=np.array(scores),
+                            thetas=np.array(thetas))
+    return grasps
 
 @njit
 def jit_detect_6d(pred_gammas, pred_betas, offset, scores, local_centers,
@@ -346,4 +500,5 @@ def collision_detect(points_all: torch.Tensor, pred_gg, mode='regnet'):
     mfcdetector = ModelFreeCollisionDetector(cloud, voxel_size=0.01, mode=mode)
     no_collision_mask = mfcdetector.detect(pred_gg, approach_dist=0.05)
     collision_free_gg = pred_gg[no_collision_mask]
+    # print(no_collision_mask)
     return collision_free_gg, no_collision_mask

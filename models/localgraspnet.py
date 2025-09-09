@@ -12,10 +12,11 @@ from .pointnet import PointNetfeat
 
 class PointMultiGraspNet(nn.Module):
 
-    def __init__(self, info_size, k_cls):
+    def __init__(self, info_size, k_cls, extra_feature_len = 32, need_stn=True):
         super().__init__()
         self.k_cls = k_cls
-        self.pointnet = PointNetfeat(feature_len=3)
+        self.extra_feature_len = extra_feature_len
+        self.pointnet = PointNetfeat(feature_len=3, extra_feature_len=self.extra_feature_len, need_stn=need_stn)
         self.point_layer = nn.Sequential(nn.Linear(1024, 512),
                                          nn.LayerNorm(512), nn.Dropout(0.3),
                                          nn.ReLU(inplace=True))

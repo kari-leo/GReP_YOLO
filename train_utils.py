@@ -170,6 +170,22 @@ def parse_args():
                         type=str,
                         choices=['adam', 'adamw', 'sgd'],
                         help='Optmizer for the training. (adam, adamw or SGD)')
+    parser.add_argument('--momentum_m',
+                        type=float,
+                        default=0.9,
+                        help='First moment for Optimizer ')
+    parser.add_argument('--momentum_v',
+                        type=float,
+                        default=0.999,
+                        help='Second moment for Optimizer ')
+    parser.add_argument('--Conf_ckpt',
+                        type=str,
+                        default=None,
+                        help='Point_Conf checkpoint path to load ')
+    parser.add_argument('--full_ckpt',
+                        type=str,
+                        default=None,
+                        help='Full checkpoint path to load ')
     parser.add_argument(
         '--step-cnt',
         type=int,
@@ -225,7 +241,7 @@ def parse_args():
     return args
 
 
-def prepare_torch_and_logger(args, mode='train'):
+def prepare_torch_and_logger(args, is_full=False, is_wide=False, mode='train'):
     # multiprocess
     # mp.set_start_method('spawn')
     # set torch and gpu setting
@@ -248,7 +264,12 @@ def prepare_torch_and_logger(args, mode='train'):
     if mode == 'test':
         net_desc = 'test' + net_desc
 
-    save_folder = os.path.join(args.logdir, net_desc)
+    if is_full:
+        save_folder = os.path.join(args.logdir, 'full', net_desc)
+    elif is_wide:
+        save_folder = os.path.join(args.logdir, 'wide', net_desc)
+    else:
+        save_folder = os.path.join(args.logdir, net_desc)
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
     tb = tensorboardX.SummaryWriter(save_folder)
@@ -284,7 +305,7 @@ def get_optimizer(args, params):
     if args.optim.lower() == 'adam':
         optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
     elif args.optim.lower() == 'adamw':
-        optimizer = optim.AdamW(params, lr=args.lr, weight_decay=1e-2)
+        optimizer = optim.AdamW(params, lr=args.lr, weight_decay=1e-2, betas = (args.momentum_m, args.momentum_v))
     elif args.optim.lower() == 'sgd':
         optimizer = optim.SGD(params, lr=args.lr, momentum=0.9)
     else:
@@ -328,7 +349,8 @@ def log_and_save(args,
                  optimizer,
                  anchors,
                  save_folder,
-                 mode='regnet'):
+                 mode='regnet',
+                 widenet=None):
     # Log validation results to tensorboard
     # loss
     tb.add_scalar('val_loss/loss', results['loss'], epoch)
@@ -349,6 +371,9 @@ def log_and_save(args,
         tb.add_scalar('val_loss/offset_loss', results['offset_loss'], epoch)
         logging.info(f'multicls_loss: {results["multi_cls_loss"]:.3f}')
         logging.info(f'offset_loss: {results["offset_loss"]:.3f}')
+        if 'PCR' in results:
+            tb.add_scalar('val_loss/PCR', results['PCR'], epoch)
+            logging.info(f'PCR: {results["PCR"]:.3f}')
 
     # coverage
     if epoch >= args.pre_epochs:
@@ -364,6 +389,11 @@ def log_and_save(args,
         iou = results['correct'] / results['total']
         tb.add_scalar('IOU', iou, epoch)
         logging.info(f'2d iou: {iou:.2f}')
+
+    if 'wide_loss' in results:
+        wide_loss = results['wide_loss']
+        tb.add_scalar('Wide Loss', wide_loss, epoch)
+        logging.info(f'Wide Loss: {wide_loss:.4f}')
 
     # regnet validation
     if epoch >= args.pre_epochs:
@@ -414,6 +444,7 @@ def log_and_save(args,
                 {
                     'anchor': anchornet.module.state_dict(),
                     'local': localnet.module.state_dict(),
+                    'wide': widenet.module.state_dict() if widenet is not None else None,
                     'optimizer': optimizer.state_dict(),
                     'gamma': anchors['gamma'],
                     'beta': anchors['beta']

@@ -134,3 +134,30 @@ class GraspnetPointDataset(GraspnetAnchorDataset):
         # get grasp path
         grasp_path = self.grasppath[index]
         return anchor_data, color_img, depth_img, grasp_path
+
+
+class GraspnetConfDataset(GraspnetPointDataset):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.confpath = []
+        for x in tqdm(self.sceneIds_str,
+                      desc='Loading 6d grasp label path...'):
+            for ann_num in range(256):
+                self.confpath.append(
+                    os.path.join(self.labelroot, '6d_dataset', x, 'result_distribution',
+                                 '{}_view.npy'.format(ann_num)))
+
+    def get_camera_pose(self, index):
+        camera_pose = np.load(self.cameraposepath[index // 256])
+        align_mat = np.load(self.alignmatpath[index // 256])
+        return align_mat @ camera_pose[index % 256]
+
+    def __getitem__(self, index):
+        # get anchor data
+        anchor_data, color_img, depth_img, grasp_path = super().__getitem__(index)
+
+        conf_map = np.load(self.confpath[index])
+        # path or data ？
+ 
+        return anchor_data, color_img, depth_img, grasp_path, conf_map

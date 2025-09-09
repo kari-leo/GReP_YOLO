@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from time import time
+
 
 class STNkd(nn.Module):
 
@@ -47,9 +49,12 @@ class STNkd(nn.Module):
 
 class PointNetfeat(nn.Module):
 
-    def __init__(self, feature_len, extra_feature_len=32):
+    def __init__(self, feature_len, extra_feature_len=32, need_stn=True, is_wide=False):
         super(PointNetfeat, self).__init__()
-        self.stn = STNkd(k=feature_len)
+        self.need_stn = need_stn
+        self.is_wide = is_wide
+        if self.need_stn:
+            self.stn = STNkd(k=feature_len)
         # self.fstn = STNkd(k=32 + extra_feature_len)
         self.conv1 = torch.nn.Conv1d(feature_len, 64, 1)
         self.conv2 = torch.nn.Conv1d(64 + extra_feature_len, 128, 1)
@@ -60,9 +65,14 @@ class PointNetfeat(nn.Module):
 
     def forward(self, x):
         # trans pc only and layer 1
-        trans = self.stn(x[:, :3])
-        x_p = torch.bmm(x[:, :3].transpose(2, 1), trans)
-        x_p = self.conv1(x_p.transpose(2, 1))
+        if self.need_stn:
+            # start = time()
+            trans = self.stn(x[:, :3])
+            # middle  = time()
+            x_p = torch.bmm(x[:, :3].transpose(2, 1), trans)
+            x_p = self.conv1(x_p.transpose(2, 1))
+        else:
+            x_p = self.conv1(x[:, :3])
         x_p = F.relu(self.bn1(x_p))
         # concat rgbd features
         x = torch.cat([x_p, x[:, 3:]], 1)
@@ -77,4 +87,43 @@ class PointNetfeat(nn.Module):
         x = self.bn3(x)
         x = torch.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
+
+        # end = time()
+        # print('ratio: ', (middle-start)/(end-start))
+        return x
+
+class PointNetwide(nn.Module):
+
+    def __init__(self, feature_len=3):
+        super(PointNetwide, self).__init__()
+        self.stn = STNkd(k=feature_len)
+        self.conv1 = torch.nn.Conv1d(feature_len, 64, 1)
+        self.conv2 = torch.nn.Conv1d(64 + 32, 128, 1)
+        self.conv3 = torch.nn.Conv1d(128, 32, 1)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.bn3 = nn.BatchNorm1d(32)
+
+    def forward(self, x):
+        x = x.transpose(1, 2) #将特征维放至第二位
+        # trans pc only and layer 1
+        # start = time()
+        trans = self.stn(x[:, :3])
+        # middle  = time()
+        x_p = torch.bmm(x[:, :3].transpose(2, 1), trans)
+        x_p = self.conv1(x_p.transpose(2, 1))
+        x_p = F.relu(self.bn1(x_p))
+        # concat rgbd features
+        x = torch.cat([x_p, x[:, 3:]], 1)
+        # feature trans and layer 2
+        # trans = self.fstn(x)
+        # x = torch.bmm(x.transpose(2, 1), trans)
+        # x = x.transpose(2, 1)
+        x = self.conv2(x)
+        x = F.relu(self.bn2(x))
+        x = self.conv3(x)
+        x = F.relu(self.bn3(x))
+        x = torch.max(x, 2, keepdim=True)[0]
+        x = x.view(-1, 32)
+
         return x

@@ -3,6 +3,9 @@ import os
 import random
 from time import time
 
+from matplotlib import pyplot as plt
+from PIL import Image
+
 import cupoch
 import numpy as np
 import open3d as o3d
@@ -97,7 +100,7 @@ def inference():
     test_data = DataLoader(test_dataset,
                            batch_size=1,
                            pin_memory=True,
-                           num_workers=1)
+                           num_workers=4)
     test_data.dataset.unaug()
     test_data.dataset.eval()
 
@@ -134,7 +137,7 @@ def inference():
     time_2d, time_data, time_6d, time_colli, time_nms = 0, 0, 0, 0, 0
 
     batch_idx = -1
-    vis_id = []
+    vis_id = [] # visualization id
     with torch.no_grad():
         for anchor_data, rgb, ori_depth, grasppaths in test_data:
             batch_idx += 1
@@ -257,6 +260,8 @@ def inference():
             pred_gg, valid_mask = collision_detect(points_all,
                                                    pred_grasp_from_rect,
                                                    mode='graspnet')
+            # pred_gg = pred_grasp_from_rect
+            # valid_mask = np.zeros(5)
             # pred_grasp = pred_grasp[valid_mask]
 
             # get collision detect
@@ -288,6 +293,25 @@ def inference():
                                      object_ids=gg.object_ids)
 
             if batch_idx in vis_id:
+                plt.close('all')
+                rgb_t = x[0, 1:].cpu().numpy().squeeze().transpose(2, 1, 0)
+                resized_rgb = Image.fromarray((rgb_t * 255.0).astype(np.uint8))
+                resized_rgb = np.array(
+                    resized_rgb.resize((args.input_w, args.input_h))) / 255.0
+                depth_t = ori_depth.cpu().numpy().squeeze().T
+                plt.subplot(221)
+                plt.imshow(resized_rgb)
+                plt.subplot(222)
+                plt.imshow(depth_t)
+                plt.subplot(223)
+                plt.imshow(loc_map.squeeze().T, cmap='jet')
+                plt.subplot(224)
+                rect_rgb = rect_gg.plot_rect_grasp_group(resized_rgb, 0)
+                plt.imshow(rect_rgb)
+                plt.tight_layout()
+                plt.show()
+
+
                 print('pred gg ==', len(pred_gg))
                 grasp_geo = pred_gg.to_open3d_geometry_list()
                 cloud = view_points[:, :3].cpu().numpy()
@@ -395,4 +419,7 @@ if __name__ == '__main__':
     logging.getLogger('').addHandler(console)
 
     inference()
+    start = time()
+    print('Start')
     evaluate()
+    print('evaluate time ', (time() - start), ' seconds')

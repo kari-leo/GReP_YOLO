@@ -1,0 +1,87 @@
+现有文件夹结构如下：
+6d_dataset
+    |   |-- scene_0000/
+    |   |   |--grasp_lables
+    |   |   |   |--0_view.npz
+    |   |   |   |--1_view.npz
+    |   |   |   |--...
+    |   |   |--resault_distribution
+    |   |   |   |--0_view.npy
+    |   |   |   |--1_view.npy
+    |   |   |   |--...
+    |   |-- scene_0001/
+    |   |-- ... ...
+    |   -- scene_0189/
+
+需从所有的scene文件夹下提取所有的.npz文件，依次对文件进行处理后，按文件名称生成结果文件存储在相应的resault_distribution下，其中结果是一个shape为(6,8)的张量，文件格式为.npy，该怎么做？
+
+现在有一些点落在了一张1280*720的图片上，称为锚点，这些点的坐标已知，并储存在一个shape为（n,2）的张量里，请你将这张图片分为8*6个部分，并生成一个shape为8*6的结果张量，若一个部分里有锚点，则将结果张量里的相应位置写为1；否则写为0。请生成这个python程序。
+
+|-- graspnet
+    |-- scenes
+    |   |-- scene_0000/
+    |   |-- object_id_list.txt              # objects' id that appear in this scene, 0-indexed
+    |   |-- rs_wrt_kn.npy                   # realsense camera pose with respect to kinect, shape: 256x(4x4)
+    |   |-- kinect                          # data of kinect camera
+    |   |   |-- rgb                         
+    |   |   |   |-- 0000.png to 0255.png    # 256 rgb images
+    |   |   `-- depth
+    |   |   |   |-- 0000.png to 0255.png    # 256 depth images
+    |   |   `-- label
+    |   |-- realsense
+    |   |   |-- rgb                         
+    |   |   |   |-- 0000.png to 0255.png    # 256 rgb images
+    |   |   `-- depth
+    |   |   |   |-- 0000.png to 0255.png    # 256 depth images
+    |   |   `-- label
+    |   |-- scene_0001/
+    |   |-- ... ...
+    |   `-- scene_0189/
+
+
+
+训练程序
+# 请用pytorch写一个神经网络的训练程序，从命令行传入的参数为学习率lr，数据集路径scene_path，groudtruth路径truth_path，保存结果路径log_path，预训练权重路径ckpt（默认值为NONE，根据该传递参数的有无确定是否重新训练网络），优化器选择optim，momentum_m默认值为0.9，momentum_v默认值为0.999，次数epoch，批大小batch_size，数据集开始编号scene_l，数据集末尾编号scene_r。
+# 数据集包含很多分辨率为1280*720的深度图像。程序从数据集中读取深度图像，将其网格化为横向8个纵向6个的网格，并将每个网格转化为点云形式（相机内参可用get_camera_intrinsic()函数得到），送入网络，得到一个二分类结果。groudtruth路径中包含每个深度图像对应的结果，形式为一个6*8的张量，每个元素为0或1。
+# ground_truth路径的文件结构如下，其结果保存在每个scene中resault_distribution下的.npy文件中：
+# 6d_dataset
+#     |   |-- scene_0000/
+#     |   |   |--grasp_lables
+#     |   |   |   |--0_view.npz
+#     |   |   |   |--1_view.npz
+#     |   |   |   |--...
+#     |   |   |--resault_distribution
+#     |   |   |   |--0_view.npy
+#     |   |   |   |--1_view.npy
+#     |   |   |   |--...
+#     |   |-- scene_0001/
+#     |   |-- ... ...
+#     |   -- scene_0189/
+# 数据集结构与上述结构相似。
+# 网络得到结果后，将这个结果送给focal_loss()计算损失，并反向传播。focal_loss()的定义如下：
+# def focal_loss(pred,
+#                targets,
+#                thres=0.99,
+#                alpha=0.5,
+#                gamma=2,
+#                neg_suppress=False):
+#     pred = torch.clamp(torch.sigmoid(pred), min=eps, max=1 - eps)
+#     pos_inds = targets.ge(thres).float()
+#     neg_inds = targets.lt(thres).float()
+
+#     pos_loss = alpha * torch.log(pred) * torch.pow(1 - pred, gamma) * pos_inds
+#     neg_loss = (1 - alpha) * torch.log(1 - pred) * torch.pow(pred,
+#                                                              gamma) * neg_inds
+
+#     if neg_suppress:
+#         neg_loss *= torch.pow(1 - targets, 4)
+
+#     num_pos = pos_inds.sum()
+#     pos_loss = pos_loss.sum()
+#     neg_loss = neg_loss.sum()
+#     if num_pos == 0:
+#         loss = -neg_loss
+#     else:
+#         loss = -(pos_loss + neg_loss) / num_pos
+#     return loss
+# 每个epoch需保存一个权重文件，在训练过程中需将训练进度可视化，并提示和保存训练过程中的损失变化情况。

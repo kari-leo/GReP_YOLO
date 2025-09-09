@@ -1,7 +1,7 @@
 CUDA_VISIBLE_DEVICES=0 python train_graspnet.py \
---batch-size 4 \
+--batch-size 2 \
 --step-cnt 2 \
---lr 1e-2 \
+--lr 2e-3 \
 --anchor-num 7 \
 --anchor-k 6 \
 --anchor-w 50 \
@@ -10,7 +10,7 @@ CUDA_VISIBLE_DEVICES=0 python train_graspnet.py \
 --group-num 512 \
 --center-num 128 \
 --scene-l 0 \
---scene-r 100 \
+--scene-r 1 \
 --noise 0 \
 --grid-size 8 \
 --input-w 640 \
@@ -19,12 +19,15 @@ CUDA_VISIBLE_DEVICES=0 python train_graspnet.py \
 --reg-b 5 \
 --cls-c 1 \
 --offset-d 1 \
---epochs 15 \
+--epochs 20 \
 --ratio 8 \
---num-workers 4 \
+--num-workers 6 \
 --save-freq 1 \
 --optim 'adamw' \
---dataset-path '/data/realsense' \
---scene-path '/ssd/graspnet' \
+--momentum_m 0.9 \
+--momentum_v 0.999 \
+--dataset-path './6dto2drefine_realsense' \
+--scene-path '/home/johnny/datasets/graspnet_1Billion' \
+--checkpoint '/home/johnny/goal_grasp_projects/mine_HGGD_ws/src/HGGD/logs/0/250219_180442_realsense/best_epoch_3_iou_1.000_cover_0.673' \
 --description 'realsense' \
 --joint-trainning

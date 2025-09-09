@@ -110,85 +110,85 @@ class PointGraspMetrics3D:
             # Default to QP force closure test.
             method = 'force_closure_qp'
 
-        # add the forces, torques, etc at each contact point
-        forces_start = time.time()
-        num_contacts = len(contacts)
-        forces = np.zeros([3, 0])
-        torques = np.zeros([3, 0])
-        normals = np.zeros([3, 0])
-        for i in range(num_contacts):
-            contact = contacts[i]
-            if vis:
-                if i == 0:
-                    contact.plot_friction_cone(color='y')
-                else:
-                    contact.plot_friction_cone(color='c')
+        # # add the forces, torques, etc at each contact point
+        # forces_start = time.time()
+        # num_contacts = len(contacts)
+        # forces = np.zeros([3, 0])
+        # torques = np.zeros([3, 0])
+        # normals = np.zeros([3, 0])
+        # for i in range(num_contacts):
+        #     contact = contacts[i]
+        #     if vis:
+        #         if i == 0:
+        #             contact.plot_friction_cone(color='y')
+        #         else:
+        #             contact.plot_friction_cone(color='c')
 
-            # get contact forces
-            force_success, contact_forces, contact_outward_normal = contact.friction_cone(
-                num_cone_faces, friction_coef)
+        #     # get contact forces
+        #     force_success, contact_forces, contact_outward_normal = contact.friction_cone(
+        #         num_cone_faces, friction_coef)
 
-            if not force_success:
-                print('Force computation failed')
-                logging.debug('Force computation failed')
-                if params.all_contacts_required:
-                    return 0
+        #     if not force_success:
+        #         print('Force computation failed')
+        #         logging.debug('Force computation failed')
+        #         if params.all_contacts_required:
+        #             return 0
 
-            # get contact torques
-            torque_success, contact_torques = contact.torques(contact_forces)
-            if not torque_success:
-                print('Torque computation failed')
-                logging.debug('Torque computation failed')
-                if params.all_contacts_required:
-                    return 0
+        #     # get contact torques
+        #     torque_success, contact_torques = contact.torques(contact_forces)
+        #     if not torque_success:
+        #         print('Torque computation failed')
+        #         logging.debug('Torque computation failed')
+        #         if params.all_contacts_required:
+        #             return 0
 
-            # get the magnitude of the normal force that the contacts could apply
-            n = contact.normal_force_magnitude()
+        #     # get the magnitude of the normal force that the contacts could apply
+        #     n = contact.normal_force_magnitude()
 
-            forces = np.c_[forces, n * contact_forces]
-            torques = np.c_[torques, n * contact_torques]
-            normals = np.c_[
-                normals,
-                n * -contact_outward_normal]  # store inward pointing normals
+        #     forces = np.c_[forces, n * contact_forces]
+        #     torques = np.c_[torques, n * contact_torques]
+        #     normals = np.c_[
+        #         normals,
+        #         n * -contact_outward_normal]  # store inward pointing normals
 
-        if normals.shape[1] == 0:
-            logging.debug('No normals')
-            print('No normals')
-            return 0
+        # if normals.shape[1] == 0:
+        #     logging.debug('No normals')
+        #     print('No normals')
+        #     return 0
 
-        # normalize torques
-        if 'torque_scaling' not in list(params.keys()):
-            torque_scaling = 1.0
-            if method == 'ferrari_canny_L1':
-                mn, mx = obj.mesh.bounding_box()
-                torque_scaling = 1.0 / np.median(mx)
-                print('torque scaling', torque_scaling)
-            params.torque_scaling = torque_scaling
+        # # normalize torques
+        # if 'torque_scaling' not in list(params.keys()):
+        #     torque_scaling = 1.0
+        #     if method == 'ferrari_canny_L1':
+        #         mn, mx = obj.mesh.bounding_box()
+        #         torque_scaling = 1.0 / np.median(mx)
+        #         print('torque scaling', torque_scaling)
+        #     params.torque_scaling = torque_scaling
 
-        if vis:
-            ax = plt.gca()
-            ax.set_xlim3d(0, obj.sdf.dims_[0])
-            ax.set_ylim3d(0, obj.sdf.dims_[1])
-            ax.set_zlim3d(0, obj.sdf.dims_[2])
-            plt.show()
+        # if vis:
+        #     ax = plt.gca()
+        #     ax.set_xlim3d(0, obj.sdf.dims_[0])
+        #     ax.set_ylim3d(0, obj.sdf.dims_[1])
+        #     ax.set_zlim3d(0, obj.sdf.dims_[2])
+        #     plt.show()
 
-        # evaluate the desired quality metric
-        quality_start = time.time()
-        Q_func = getattr(PointGraspMetrics3D, method)
-        quality = Q_func(forces,
-                         torques,
-                         normals,
-                         soft_fingers=soft_fingers,
-                         params=params)
+        # # evaluate the desired quality metric
+        # quality_start = time.time()
+        # Q_func = getattr(PointGraspMetrics3D, method)
+        # quality = Q_func(forces,
+        #                  torques,
+        #                  normals,
+        #                  soft_fingers=soft_fingers,
+        #                  params=params)
 
-        end = time.time()
-        logging.debug('Contacts took %.3f sec' %
-                      (forces_start - contacts_start))
-        logging.debug('Forces took %.3f sec' % (quality_start - forces_start))
-        logging.debug('Quality eval took %.3f sec' % (end - quality_start))
-        logging.debug('Everything took %.3f sec' % (end - start))
+        # end = time.time()
+        # logging.debug('Contacts took %.3f sec' %
+        #               (forces_start - contacts_start))
+        # logging.debug('Forces took %.3f sec' % (quality_start - forces_start))
+        # logging.debug('Quality eval took %.3f sec' % (end - quality_start))
+        # logging.debug('Everything took %.3f sec' % (end - start))
 
-        return quality
+        # return quality
 
     @staticmethod
     def grasp_matrix(forces,

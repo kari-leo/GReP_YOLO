@@ -192,7 +192,46 @@ class Grasp():
         gripper.vertices = o3d.utility.Vector3dVector(vertices)
         gripper.triangles = o3d.utility.Vector3iVector(triangles)
         gripper.vertex_colors = o3d.utility.Vector3dVector(colors)
+
+        # # **添加坐标系**
+        # coordinate_frame = self.create_coordinate_frame(axis_length=0.02)
+
         return gripper
+        # return [gripper, coordinate_frame]
+    
+    def create_coordinate_frame(self, axis_length=0.02):
+        """
+        创建一个表示坐标系的 LineSet，并根据旋转矩阵调整朝向
+        :param origin: 坐标原点 (3,)
+        :param rotation: 旋转矩阵 (3,3)
+        :param axis_length: 坐标轴的长度
+        :return: open3d.geometry.LineSet
+        """
+        # 创建局部坐标系
+        origin = np.array([0, 0, 0])  # 坐标系的原点
+
+        # 轴的方向
+        x_axis = np.array([axis_length, 0, 0])
+        y_axis = np.array([0, axis_length, 0])
+        z_axis = np.array([0, 0, axis_length])
+
+        # 应用旋转和平移
+        axes_points = np.array([origin, x_axis, origin, y_axis, origin, z_axis])
+        axes_points = axes_points @ self.rotation.T + self.translation  # 变换到全局坐标
+
+        # 连接方式：每两个点形成一条线
+        lines = [[0, 1], [2, 3], [4, 5]]
+
+        # 颜色：X=红色，Y=绿色，Z=蓝色
+        colors = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+        # 创建 LineSet
+        axis_frame = o3d.geometry.LineSet()
+        axis_frame.points = o3d.utility.Vector3dVector(axes_points)
+        axis_frame.lines = o3d.utility.Vector2iVector(lines)
+        axis_frame.colors = o3d.utility.Vector3dVector(colors)
+
+        return axis_frame
 
 
 class GraspGroup():
@@ -516,6 +555,64 @@ class RectGrasp():
             return 0
         intersection = np.sum(canvas == 2)
         return intersection / union
+    
+    # def rect_to_grasp(self, depth=0.025):
+    #     # 复制中心坐标以避免修改原数据
+    #     center_2d = self.center.copy()
+        
+    #     # 计算平移向量
+    #     translation = pixel_depth_2_points(
+    #         center_2d[0], center_2d[1], self.depth / 1000
+    #     )
+        
+    #     # 调整中心点和开口点到图像中心
+    #     intrinsics = get_camera_intrinsic()
+    #     center_2d[0] = intrinsics[0, 2]
+    #     center_2d[1] = intrinsics[1, 2]
+        
+    #     open_x = center_2d[0] - self.width / 2 * np.cos(self.theta)
+    #     open_y = center_2d[1] + self.width / 2 * np.sin(self.theta)
+    #     open_2d = np.array([open_x, open_y])
+        
+    #     upper_point = get_2d_key_points(center_2d, np.array([[self.height]]), open_2d)
+        
+    #     # 计算 3D 坐标
+    #     center_xyz = pixel_depth_2_points(center_2d[0], center_2d[1], self.depth / 1000)
+    #     open_xyz = pixel_depth_2_points(open_2d[0], open_2d[1], self.depth / 1000)
+    #     upper_xyz = pixel_depth_2_points(upper_point[0], upper_point[1], self.depth / 1000)
+        
+    #     height = np.linalg.norm(upper_xyz - center_xyz) * 2
+    #     width = np.linalg.norm(open_xyz - center_xyz) * 2
+        
+    #     rotation = key_point_2_rotation(center_xyz, open_xyz, upper_xyz).reshape((3, 3))
+        
+    #     # 绕抓取器本身坐标系 z 轴旋转 gamma 角
+    #     Rz = np.array([
+    #         [np.cos(self.gamma), -np.sin(self.gamma), 0],
+    #         [np.sin(self.gamma), np.cos(self.gamma), 0],
+    #         [0, 0, 1]
+    #     ])
+    #     rotation = rotation @ Rz
+        
+    #     # 绕抓取器本身坐标系 y 轴旋转 beta 角
+    #     Ry = np.array([
+    #         [np.cos(self.beta), 0, np.sin(self.beta)],
+    #         [0, 1, 0],
+    #         [-np.sin(self.beta), 0, np.cos(self.beta)]
+    #     ])
+    #     rotation = rotation @ Ry
+        
+    #     # 创建 Grasp 对象
+    #     grasp = Grasp()
+    #     grasp.translation = translation
+    #     grasp.rotation = rotation
+    #     grasp.height = height
+    #     grasp.width = width
+    #     grasp.depth = depth
+    #     grasp.score = self.score
+    #     grasp.object_id = self.object_id
+        
+    #     return grasp
 
 
 class RectGraspGroup():

@@ -134,6 +134,13 @@ def get_2d_key_points(centers_2d, heights_2d, open_points):
     open_point_vector = open_points - centers_2d
     norm_open_point_vector = np.linalg.norm(open_point_vector,
                                             axis=1).reshape(-1, 1)
+    # denominator = np.hstack((norm_open_point_vector, norm_open_point_vector))
+    # # 进行逐元素除法，跳过0或None的情况
+    # unit_open_point_vector = np.where(
+    #     (denominator == 0) | np.isnan(denominator), 
+    #     np.nan,  # 赋值为 np.nan 
+    #     open_point_vector / denominator
+    # )
     unit_open_point_vector = open_point_vector / np.hstack(
         (norm_open_point_vector, norm_open_point_vector))  # (-1, 2)
     counter_clock_wise_rotation_matrix = np.array([[0, -1], [1, 0]])

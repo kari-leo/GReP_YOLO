@@ -199,3 +199,28 @@ def faster_get_local_labels(eulers, thetas, label_eulers, label_offsets):
                 idx = np.argmin(rot_dis[j])
                 offset_labels[i, j] = label_offsets[i][idx]
     return multi_labels, offset_labels
+
+def binary_cross_entropy(pred, targets):
+    """
+    Binary Cross-Entropy Loss for tensors with shape [batch_size, height, width].
+    Args:
+        pred (torch.Tensor): Predictions with shape [batch_size, height, width].
+        targets (torch.Tensor): Ground truth with shape [batch_size, height, width].
+
+    Returns:
+        torch.Tensor: Scalar binary cross-entropy loss value.
+    """
+    if pred.shape == (8, 6):
+        pred = pred.reshape(6, 8)
+    else:
+        pred = pred.reshape(pred.shape[0], 6, 8)
+
+    # Apply sigmoid to predictions to get probabilities
+    pred = torch.sigmoid(pred)
+
+    targets = targets.float()
+    
+    # Compute binary cross-entropy loss
+    loss = F.binary_cross_entropy(pred, targets, reduction='mean')
+
+    return loss

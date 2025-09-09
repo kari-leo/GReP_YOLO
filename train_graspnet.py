@@ -402,6 +402,19 @@ def train(epoch, anchornet: nn.Module, localnet: nn.Module,
                 args.center_num,
                 args.group_num, (args.input_w, args.input_h),
                 is_training=False)
+            # pc_group, _, valid_local_centers = data_process(
+            #     points_all,
+            #     depths.cuda(),
+            #     rect_ggs,
+            #     args.center_num,
+            #     args.group_num, (args.input_w, args.input_h),
+            #     is_training=False,
+            #     is_wide=True)
+            
+            # print(pc_group.shape)
+            # print(len(rect_ggs))
+            # print(len(rect_ggs[0]))
+            # print(width_offset)
 
             # get 2d grasp info (not grasp itself) for trainning
             grasp_info = np.zeros((0, 3), dtype=np.float32)
@@ -605,7 +618,8 @@ def run():
             anchors['beta'] = ckpt['beta']
             logging.info('Using saved anchors')
         anchornet.load_state_dict(ckpt['anchor'])
-        # localnet.load_state_dict(ckpt['local'])
+        # 为什么把loadlocalnet注释了？
+        localnet.load_state_dict(ckpt['local'])
 
     # set optimizer
     params = itertools.chain(anchornet.parameters(), localnet.parameters())
@@ -670,4 +684,5 @@ def run():
 
 
 if __name__ == '__main__':
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
     run()
