@@ -1,4 +1,17 @@
 <h2 align="center">
+  <b>Grasp Detection Network Based on Regional Multi-scale Features and Physical Prior Knowledge</b>
+
+# GReP Framework
+![framework](./images/GReP_framework.png)
+
+# GRep Requirements
+- python3.8.20
+- torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
+- numpy==1.23.5
+
+
+[HGGD code](https://github.com/THU-VCLab/HGGD)
+<h2 align="center">
   <b>Efficient Heatmap-Guided 6-Dof Grasp Detection in Cluttered Scenes</b>
 
 <b><i>RA-L 2023</i></b>
